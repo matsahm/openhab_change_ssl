@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+# Stop on errors
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# Set magic variables
+__dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+__file="${__dir}/$(basename "${BASH_SOURCE[0]}")"
+__base="$(basename "${__file}" .sh)"
+
+# Variablen definieren
+FOLDER=/var/lib/openhab2/etc
+SSL_CA=/var/www/ssl/ca.crt
+SSL_CERT=/var/www/ssl/zert.crt
+SSL_KEY=/var/www/ssl/privat.key
+
+# openHAB beenden
+systemctl stop openhab2
+
+# Verzeichnis betreten
+cd $FOLDER
+
+# Backup anlegen
+cp keystore keystore.bak
+
+# CA und Zertifikat zusammenführen
+SSL_CHAIN=/tmp/chain.pem
+cat $SSL_CA $SSL_CERT > $SSL_CHAIN
+
+# PKCS12 generieren
+SSL_PKCS=/tmp/oh.pkcs12
+openssl pkcs12 -nodes -passout pass:openhab \
+        -inkey $SSL_KEY \
+        -in $SSL_CHAIN \
+        -export -name mykey \
+        -out $SSL_PKCS
+
+# Altes Zertifikat aus Schlüsselbund entfernen
+keytool -delete -alias mykey -deststorepass openhab \
+        -keystore keystore
+
+# Neues Zertifikat dem Schlüsselbund hinzufügen
+keytool -importkeystore -srcstorepass openhab \
+        -srckeystore $SSL_PKCS \
+        -srcstoretype PKCS12 -deststoretype jks \
+        -alias mykey -destalias mykey -deststorepass openhab \
+        -destkeystore keystore
+
+# openHAB beenden
+systemctl start openhab2
+
+# Aufräumen
+rm -f $SSL_CHAIN
+rm -f $SSL_PKCS
